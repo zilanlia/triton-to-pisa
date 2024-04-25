@@ -6,7 +6,7 @@ import triton.language as tl
 # from intel_extension_for_pytorch._inductor.xpu.triton_heuristics import AutotuneHint, pointwise
 # from torch._inductor.utils import instance_descriptor
 # import triton_helpers
-
+import intel_extension_for_pytorch 
 from helper import rand_strided
 import torch
 # from intel_extension_for_pytorch._C import _getCurrentRawStream as get_xpu_stream

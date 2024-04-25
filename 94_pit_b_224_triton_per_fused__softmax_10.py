@@ -21,11 +21,11 @@ import torch
 # )
 
 #abstract parameters
-arg_0_shape = (1, 16, 1024)
+arg_0_shape = (1, 4, 1024)
 arg_0_stride = (arg_0_shape[1] * arg_0_shape[2], 
                 arg_0_shape[2], 
                 1)
-arg_1_shape = (1, 1, 16, 1024)
+arg_1_shape = (1, 1, 4, 1024)
 arg_1_stride = (arg_1_shape[1] * arg_1_shape[2] * arg_1_shape[3],
                 arg_1_shape[2] * arg_1_shape[3],
                 arg_1_shape[3], 

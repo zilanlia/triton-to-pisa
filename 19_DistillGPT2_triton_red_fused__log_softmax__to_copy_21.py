@@ -1,27 +1,23 @@
 
 import triton
 import triton.language as tl
-# from torch._inductor.ir import ReductionHint
-# from torch._inductor.ir import TileHint
-# from intel_extension_for_pytorch._inductor.xpu.triton_heuristics import AutotuneHint, reduction
-# from torch._inductor.utils import instance_descriptor
-import triton_helpers
-import intel_extension_for_pytorch 
-from helper import rand_strided
-import torch
-# from intel_extension_for_pytorch._C import _getCurrentRawStream as get_xpu_stream
-# from torch._inductor.triton_heuristics import grid
 
-# @reduction(
-#     size_hints=[8192, 65536],
-#     reduction_hint=ReductionHint.DEFAULT,
-#     filename=__file__,
-#     meta={'signature': {0: '*bf16', 1: '*fp32', 2: 'i32', 3: 'i32'}, 'device': 0, 'device_type': 'xpu', 'constants': {}, 'mutated_arg_names': [], 'autotune_hints': set(), 'kernel_name': 'triton_red_fused__log_softmax__to_copy_21', 'configs': [instance_descriptor(divisible_by_16=(0, 1, 2), equal_to_1=(), ids_of_folded_args=(), divisible_by_8=(2,))]}
-# )
+import torch
+import intel_extension_for_pytorch 
+
+import triton_helpers
+from helper import rand_strided, size
+
+import argparse
+import sys
+
+parser = argparse.ArgumentParser(description='function parameters')
+parser.add_argument('--device', dest='device', type=str, help='Running on hw or sim')
+parser.add_argument('--shape0', dest='shape0', type=tuple, help='shape of arg0')
+parser.add_argument('--shape1', dest='shape1', type=tuple, help='shape of arg1')
+
 @triton.jit
-def triton_red_fused__log_softmax__to_copy_21(in_ptr0, out_ptr2, xnumel, rnumel, XBLOCK : tl.constexpr, RBLOCK : tl.constexpr):
-    xnumel = 8176
-    rnumel = 50257
+def triton_red_fused__log_softmax__to_copy_21(in_ptr0, out_ptr2, xnumel, rnumel, consta_val_0, XBLOCK : tl.constexpr, RBLOCK : tl.constexpr):
     xoffset = tl.program_id(0) * XBLOCK
     xindex = xoffset + tl.arange(0, XBLOCK)[:, None]
     xmask = xindex < xnumel
@@ -32,7 +28,7 @@ def triton_red_fused__log_softmax__to_copy_21(in_ptr0, out_ptr2, xnumel, rnumel,
         rindex = roffset + rbase
         rmask = rindex < rnumel
         r1 = rindex
-        tmp0 = tl.load(in_ptr0 + (r1 + (50257*(x0 % 511)) + (25731584*(x0 // 511))), rmask & xmask, eviction_policy='evict_last', other=0).to(tl.float32)
+        tmp0 = tl.load(in_ptr0 + (r1 + (rnumel*(x0 % 511)) + (consta_val_0*(x0 // 511))), rmask & xmask, eviction_policy='evict_last', other=0).to(tl.float32)
         tmp1 = tmp0.to(tl.float32)
         tmp2 = tl.broadcast_to(tmp1, [XBLOCK, RBLOCK])
         tmp4 = triton_helpers.maximum(_tmp3, tmp2)
@@ -43,7 +39,7 @@ def triton_red_fused__log_softmax__to_copy_21(in_ptr0, out_ptr2, xnumel, rnumel,
         rindex = roffset + rbase
         rmask = rindex < rnumel
         r1 = rindex
-        tmp5 = tl.load(in_ptr0 + (r1 + (50257*(x0 % 511)) + (25731584*(x0 // 511))), rmask & xmask, eviction_policy='evict_last', other=0).to(tl.float32)
+        tmp5 = tl.load(in_ptr0 + (r1 + (rnumel*(x0 % 511)) + (consta_val_0*(x0 // 511))), rmask & xmask, eviction_policy='evict_last', other=0).to(tl.float32)
         tmp6 = tmp5.to(tl.float32)
         tmp7 = tmp6 - tmp3
         tmp8 = tl.exp(tmp7)
@@ -55,41 +51,60 @@ def triton_red_fused__log_softmax__to_copy_21(in_ptr0, out_ptr2, xnumel, rnumel,
         rindex = roffset + rbase
         rmask = rindex < rnumel
         r1 = rindex
-        tmp12 = tl.load(in_ptr0 + (r1 + (50257*(x0 % 511)) + (25731584*(x0 // 511))), rmask & xmask, other=0).to(tl.float32)
+        tmp12 = tl.load(in_ptr0 + (r1 + (rnumel*(x0 % 511)) + (consta_val_0*(x0 // 511))), rmask & xmask, other=0).to(tl.float32)
         tmp13 = tmp12.to(tl.float32)
         tmp14 = tmp13 - tmp3
         tmp15 = tl.log(tmp10)
         tmp16 = tmp14 - tmp15
-        tl.store(out_ptr2 + (r1 + (50257*x0)), tmp16, rmask & xmask)
+        tl.store(out_ptr2 + (r1 + (rnumel*x0)), tmp16, rmask & xmask)
 
 
-def get_args():
-    arg_0 = rand_strided((8192, 50257), (50257, 1), device='xpu:0', dtype=torch.bfloat16)
-    arg_1 = rand_strided((8176, 50257), (50257, 1), device='xpu:0', dtype=torch.float32)
+def get_args(arg_0_size, arg_1_size):
+    # WR  torch.as_strided will cause error "Connection Closed" in pre-si env
+    # arg_0 = rand_strided((8192, 50257), (50257, 1), device='xpu:0', dtype=torch.bfloat16)
+    # arg_1 = rand_strided((8176, 50257), (50257, 1), device='xpu:0', dtype=torch.float32)
+    arg_0 = torch.rand(arg_0_size, device='xpu:0', dtype=torch.bfloat16)
+    arg_1 = torch.rand(arg_1_size, device='xpu:0', dtype=torch.float32)
     return arg_0, arg_1,
 
 
-def call(args):
-    # with torch.xpu._DeviceGuard(0):
-    #     torch.xpu.set_device(0)
-    #     stream0 = get_xpu_stream(0)
-    grid=lambda meta: (8176, )
-    triton_red_fused__log_softmax__to_copy_21[grid](*args, 8176, 50257, 1, 1024)
-
-
-# def benchmark_all_configs(args):
-#     with torch.xpu._DeviceGuard(0):
-#         torch.xpu.set_device(0)
-#         return triton_red_fused__log_softmax__to_copy_21.benchmark_all_configs(*args, 8176, 50257, grid=grid(8176))
+def call(args, arg_1_shape):
+    grid=lambda meta: (triton.cdiv(arg_1_shape[0], 1024), )
+    consta_val_0 = 512 * arg_1_shape[1]
+    triton_red_fused__log_softmax__to_copy_21[grid](*args, arg_1_shape[0], arg_1_shape[1], consta_val_0, 1, 1024)
 
 
 if __name__ == '__main__':
-    # from torch._inductor.utils import get_num_bytes
-    # from intel_extension_for_pytorch._inductor.xpu.utils import do_bench
+    args = parser.parse_args()
+    arg_0_shape = ()
+    arg_1_shape = ()
 
-    args = get_args()
-    call(args)
-    # ms = do_bench(lambda: call(args), rep=40, fast_flush=True)
-    # num_gb = get_num_bytes(*args, num_in_out_args=0) / 1e9
-    # gb_per_s = num_gb / (ms / 1e3)
-    # print(f"{ms:.3f}ms    {num_gb:.3f}GB    {gb_per_s:.2f}GB/s")
+    if args.shape0 and  args.shape1:
+        arg_0_shape = arg_0_shape + args.shape0
+        arg_1_shape = arg_1_shape + args.shape1
+    elif args.device == "hw":
+        arg_0_shape = arg_0_shape + (8192, 50257)
+        arg_1_shape = arg_1_shape + (8176, 50257)
+    elif args.device == "sim":
+        arg_0_shape = arg_0_shape + (16, 256)
+        arg_1_shape = arg_1_shape + (16, 256)
+    else:
+        print("need device info or args' shape")
+        sys.exit(0)
+
+    if (not len(arg_0_shape) == 2) :
+        print("shape of arg0 must be 2")
+    if (not len(arg_1_shape) == 2) :
+        print("shape of arg1 must be 2")
+
+    arg_0_size = size(arg_0_shape)
+    arg_1_size = size(arg_1_shape)
+
+    print("create args")
+    args = get_args(arg_0_size, arg_1_size)
+
+    print("call kernel")
+    call(args, arg_1_shape)
+
+    print("result")
+    print(args[1])

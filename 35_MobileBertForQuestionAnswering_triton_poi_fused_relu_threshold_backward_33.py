@@ -1,21 +1,23 @@
 
 import triton
 import triton.language as tl
-# from torch._inductor.ir import ReductionHint
-# from torch._inductor.ir import TileHint
-# from intel_extension_for_pytorch._inductor.xpu.triton_heuristics import AutotuneHint, pointwise
-# from torch._inductor.utils import instance_descriptor
-import triton_helpers
-import intel_extension_for_pytorch 
-from helper import rand_strided
-import torch
-# from intel_extension_for_pytorch._C import _getCurrentRawStream as get_xpu_stream
-# from torch._inductor.triton_heuristics import grid
 
-# @pointwise(size_hints=[8388608], filename=__file__, meta={'signature': {0: '*bf16', 1: '*i1', 2: 'i32'}, 'device': 0, 'device_type': 'xpu', 'constants': {}, 'mutated_arg_names': [], 'autotune_hints': set(), 'kernel_name': 'triton_poi_fused_relu_threshold_backward_33', 'configs': [instance_descriptor(divisible_by_16=(0, 1, 2), equal_to_1=(), ids_of_folded_args=(), divisible_by_8=(2,))]})
+import torch
+import intel_extension_for_pytorch
+
+import triton_helpers
+from helper import rand_strided, size
+
+import argparse
+import sys
+
+parser = argparse.ArgumentParser(description='function parameters')
+parser.add_argument('--device', dest='device', type=str, help='Running on hw or sim')
+parser.add_argument('--shape0', dest='shape0', type=tuple, help='shape of arg0')
+parser.add_argument('--shape1', dest='shape1', type=tuple, help='shape of arg1')
+
 @triton.jit
 def triton_poi_fused_relu_threshold_backward_33(in_ptr0, out_ptr0, xnumel, XBLOCK : tl.constexpr):
-    xnumel = 8388608
     xoffset = tl.program_id(0) * XBLOCK
     xindex = xoffset + tl.arange(0, XBLOCK)[:]
     xmask = xindex < xnumel
@@ -27,33 +29,54 @@ def triton_poi_fused_relu_threshold_backward_33(in_ptr0, out_ptr0, xnumel, XBLOC
     tl.store(out_ptr0 + (x0), tmp3, None)
 
 
-def get_args():
-    arg_0 = rand_strided((16384, 512), (512, 1), device='xpu:0', dtype=torch.bfloat16)
-    arg_1 = rand_strided((128, 128, 512), (65536, 512, 1), device='xpu:0', dtype=torch.bool)
+def get_args(arg_0_size, arg_1_size):
+    # WR  as_strided will cause error "Connection Closed"
+    # arg_0 = rand_strided((16384, 512), (512, 1), device='xpu:0', dtype=torch.bfloat16)
+    # arg_1 = rand_strided((128, 128, 512), (65536, 512, 1), device='xpu:0', dtype=torch.bool)
+    arg_0 = torch.rand(arg_0_size, device='xpu:0', dtype=torch.bfloat16)
+    arg_1 = torch.zeros(arg_1_size, device='xpu:0', dtype=torch.bool)
     return arg_0, arg_1,
 
 
-def call(args):
-    # with torch.xpu._DeviceGuard(0):
-    #     torch.xpu.set_device(0)
-    #     stream0 = get_xpu_stream(0)
-    grid=lambda meta: (8388608, )
-    triton_poi_fused_relu_threshold_backward_33[grid](*args, 8388608, 1)
-
-
-# def benchmark_all_configs(args):
-#     with torch.xpu._DeviceGuard(0):
-#         torch.xpu.set_device(0)
-#         return triton_poi_fused_relu_threshold_backward_33.benchmark_all_configs(*args, 8388608, grid=grid(8388608))
+def call(args, arg_0_size):
+    grid=lambda meta: (triton.cdiv(arg_0_size, 1024), )
+    triton_poi_fused_relu_threshold_backward_33[grid](*args, arg_0_size, 1)
 
 
 if __name__ == '__main__':
-    # from torch._inductor.utils import get_num_bytes
-    # from intel_extension_for_pytorch._inductor.xpu.utils import do_bench
+    args = parser.parse_args()
+    arg_0_shape = ()
+    arg_1_shape = ()
 
-    args = get_args()
-    call(args)
-    # ms = do_bench(lambda: call(args), rep=40, fast_flush=True)
-    # num_gb = get_num_bytes(*args, num_in_out_args=0) / 1e9
-    # gb_per_s = num_gb / (ms / 1e3)
-    # print(f"{ms:.3f}ms    {num_gb:.3f}GB    {gb_per_s:.2f}GB/s")
+    if args.shape0 and  args.shape1:
+        arg_0_shape = arg_0_shape + args.shape0
+        arg_1_shape = arg_1_shape + args.shape1
+    elif args.device == "hw":
+        arg_0_shape = arg_0_shape + (16384, 512)
+        arg_1_shape = arg_1_shape + (128, 128, 512)
+    elif args.device == "sim":
+        arg_0_shape = arg_0_shape + (16, 256)
+        arg_1_shape = arg_1_shape + (4, 4, 256)
+    else:
+        print("need device info or args' shape")
+        sys.exit(0)
+
+    if (not len(arg_0_shape) == 2) :
+        print("shape of arg0 must be 2")
+    if (not len(arg_1_shape) == 3) :
+        print("shape of arg1 must be 3")
+
+    arg_0_stride = (arg_0_shape[1], 1)
+    arg_1_stride = (arg_1_shape[1] * arg_1_shape[2] ,arg_1_shape[2], 1)
+
+    arg_0_size = size(arg_0_shape)
+    arg_1_size = size(arg_1_shape)
+
+    print("Creare input data")
+    args = get_args(arg_0_size, arg_1_size)
+
+    print("call func")
+    call(args, arg_0_size)
+
+    print("result")
+    print(args[1])

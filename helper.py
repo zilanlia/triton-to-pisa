@@ -17,3 +17,9 @@ def rand_strided(
     else:
         buffer = torch.zeros(size=[needed_size], dtype=dtype, device=device)
     return torch.as_strided(buffer, size, stride)
+
+def size(shape):
+    size = 1
+    for dim in shape:
+        size = size * dim
+    return size

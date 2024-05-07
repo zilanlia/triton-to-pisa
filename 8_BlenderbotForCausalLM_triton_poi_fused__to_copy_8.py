@@ -1,57 +1,73 @@
 
 import triton
 import triton.language as tl
-# from torch._inductor.ir import ReductionHint
-# from torch._inductor.ir import TileHint
-# from intel_extension_for_pytorch._inductor.xpu.triton_heuristics import AutotuneHint, pointwise
-# from torch._inductor.utils import instance_descriptor
-# import triton_helpers
-import intel_extension_for_pytorch 
-from helper import rand_strided
-import torch
-# from intel_extension_for_pytorch._C import _getCurrentRawStream as get_xpu_stream
-# from torch._inductor.triton_heuristics import grid
 
-# @pointwise(size_hints=[33554432], filename=__file__, meta={'signature': {0: '*fp32', 1: '*bf16', 2: 'i32'}, 'device': 0, 'device_type': 'xpu', 'constants': {}, 'mutated_arg_names': [], 'autotune_hints': set(), 'kernel_name': 'triton_poi_fused__to_copy_8', 'configs': [instance_descriptor(divisible_by_16=(0, 1, 2), equal_to_1=(), ids_of_folded_args=(), divisible_by_8=(2,))]})
+import torch
+import intel_extension_for_pytorch
+
+from helper import rand_strided, size
+
+import argparse
+import sys
+
+parser = argparse.ArgumentParser(description='function parameters')
+parser.add_argument('--device', dest='device', type=str, help='Running on hw or sim')
+parser.add_argument('--shape0', dest='shape0', type=tuple, help='shape of arg0')
+parser.add_argument('--shape1', dest='shape1', type=tuple, help='shape of arg1')
+
 @triton.jit
 def triton_poi_fused__to_copy_8(in_ptr0, out_ptr0, xnumel, XBLOCK : tl.constexpr):
-    xnumel = 26214400
     xoffset = tl.program_id(0) * XBLOCK
     xindex = xoffset + tl.arange(0, XBLOCK)[:]
-    xmask = xindex < xnumel
     x0 = xindex
     tmp0 = tl.load(in_ptr0 + (x0), None)
     tmp1 = tmp0.to(tl.float32)
     tl.store(out_ptr0 + (x0), tmp1, None)
 
 
-def get_args():
-    arg_0 = rand_strided((10240, 2560), (2560, 1), device='xpu:0', dtype=torch.float32)
-    arg_1 = rand_strided((10240, 2560), (2560, 1), device='xpu:0', dtype=torch.bfloat16)
+def get_args(arg_0_size, arg_1_size):
+    # WR  torch.as_strided will cause error "Connection Closed" in pre-si env
+    # arg_0 = rand_strided((10240, 2560), (2560, 1), device='xpu:0', dtype=torch.float32)
+    # arg_1 = rand_strided((10240, 2560), (2560, 1), device='xpu:0', dtype=torch.bfloat16)
+    arg_0 = torch.rand(arg_0_size, device='xpu', dtype=torch.float32)
+    arg_1 = torch.rand(arg_1_size, device='xpu', dtype=torch.bfloat16)
     return arg_0, arg_1,
 
 
-def call(args):
-    # with torch.xpu._DeviceGuard(0):
-    #     torch.xpu.set_device(0)
-    #     stream0 = get_xpu_stream(0)
-    grid=lambda meta: (26214400, )
-    triton_poi_fused__to_copy_8[grid](*args, 26214400, 1)
-
-
-# def benchmark_all_configs(args):
-#     with torch.xpu._DeviceGuard(0):
-#         torch.xpu.set_device(0)
-#         return triton_poi_fused__to_copy_8.benchmark_all_configs(*args, 26214400, grid=grid(26214400))
+def call(args, arg_0_size):
+    grid=lambda meta: (triton.cdiv(arg_0_size, 1024), ) #BLOCK_SIZE=1024
+    triton_poi_fused__to_copy_8[grid](*args, arg_0_size, 1024)
 
 
 if __name__ == '__main__':
-    # from torch._inductor.utils import get_num_bytes
-    # from intel_extension_for_pytorch._inductor.xpu.utils import do_bench
+    args = parser.parse_args()
+    arg_0_shape = ()
+    arg_1_shape = ()
 
-    args = get_args()
-    call(args)
-    # ms = do_bench(lambda: call(args), rep=40, fast_flush=True)
-    # num_gb = get_num_bytes(*args, num_in_out_args=0) / 1e9
-    # gb_per_s = num_gb / (ms / 1e3)
-    # print(f"{ms:.3f}ms    {num_gb:.3f}GB    {gb_per_s:.2f}GB/s")
+    if args.shape0 and  args.shape1:
+        arg_0_shape = arg_0_shape + args.shape0
+        arg_1_shape = arg_1_shape + args.shape1
+    elif args.device == "hw":
+        arg_0_shape = arg_0_shape + (10240, 2560)
+        arg_1_shape = arg_1_shape + (10240, 2560)
+    elif args.device == "sim":
+        arg_0_shape = arg_0_shape + (16, 256)
+        arg_1_shape = arg_1_shape + (16, 256)
+    else:
+        print("need device info or args' shape")
+        sys.exit(0)
+
+    if (not len(arg_0_shape) == 2) :
+        print("shape of arg0 must be 2")
+    if (not len(arg_1_shape) == 2) :
+        print("shape of arg1 must be 2")
+
+    arg_0_size = size(arg_0_shape)
+    arg_1_size = size(arg_1_shape)
+
+    print("create args")
+    args = get_args(arg_0_size, arg_1_size)
+    print("call kernel")
+    call(args, arg_0_size)
+    print("result")
+    print(args[1])
